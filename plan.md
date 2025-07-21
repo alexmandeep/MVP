@@ -328,7 +328,7 @@ Deno.serve(async (req) => {
             company_id: invite.company_id,
             team_id: invite.team_id,
             qa_responses: { // Storing both email and answers for context
-                guest_email: invite.guest_email,
+                email: invite.guest_email,
                 responses: answers
             }
         })

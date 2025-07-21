@@ -139,7 +139,7 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
               fontSize: '1.1rem',
               textAlign: 'center'
             }}>
-              Question {index + 1} - {question.parameter}
+              Question {index + 1}
             </h3>
             
             <div style={{
