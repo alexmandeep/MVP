@@ -11,13 +11,13 @@ interface SurveyData {
 interface QuestionOption {
   label: string
   value: number
-  side: string
 }
 
 interface SurveyQuestion {
   questionId: string
   parameter: string
-  question: string
+  statementA: string
+  statementB: string
   options: QuestionOption[]
 }
 
@@ -269,23 +269,67 @@ export default function GuestSurveyPage({ token }: GuestSurveyPageProps) {
                 }}>
                   <div style={{ marginBottom: '20px' }}>
                     <h4 style={{ 
-                      margin: '0 0 10px 0',
+                      margin: '0 0 15px 0',
                       color: 'var(--gray-800)',
                       fontSize: '1.1rem',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px'
+                      textAlign: 'center'
                     }}>
-                      {index + 1}. {question.question}
+                      Question {index + 1} - {question.parameter}
                     </h4>
-                    <p style={{ 
-                      margin: '0 0 15px 0', 
-                      fontSize: '14px',
-                      color: 'var(--gray-600)',
-                      fontStyle: 'italic'
+                    
+                    <div style={{
+                      display: 'flex',
+                      gap: '20px',
+                      marginBottom: '20px',
+                      padding: '20px',
+                      backgroundColor: 'var(--gray-50)',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--gray-200)'
                     }}>
-                      {question.parameter}
-                    </p>
+                      <div style={{ flex: 1 }}>
+                        <div style={{
+                          fontWeight: '600',
+                          color: 'var(--primary-700)',
+                          marginBottom: '8px',
+                          fontSize: '14px'
+                        }}>
+                          Statement A
+                        </div>
+                        <p style={{
+                          margin: 0,
+                          fontSize: '16px',
+                          lineHeight: '1.4',
+                          color: 'var(--gray-800)'
+                        }}>
+                          {question.statementA}
+                        </p>
+                      </div>
+                      
+                      <div style={{
+                        width: '2px',
+                        backgroundColor: 'var(--gray-300)',
+                        margin: '0 10px'
+                      }} />
+                      
+                      <div style={{ flex: 1 }}>
+                        <div style={{
+                          fontWeight: '600',
+                          color: 'var(--primary-700)',
+                          marginBottom: '8px',
+                          fontSize: '14px'
+                        }}>
+                          Statement B
+                        </div>
+                        <p style={{
+                          margin: 0,
+                          fontSize: '16px',
+                          lineHeight: '1.4',
+                          color: 'var(--gray-800)'
+                        }}>
+                          {question.statementB}
+                        </p>
+                      </div>
+                    </div>
                   </div>
 
                   <div style={{ 
@@ -353,7 +397,7 @@ export default function GuestSurveyPage({ token }: GuestSurveyPageProps) {
                           color: 'var(--gray-500)',
                           fontStyle: 'italic'
                         }}>
-                          ({option.side}: {option.value > 0 ? '+' : ''}{option.value})
+                          ({option.value > 0 ? '+' : ''}{option.value})
                         </span>
                       </label>
                     ))}
