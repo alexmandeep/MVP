@@ -76,6 +76,7 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
         user_id: user?.id,
         team_id: profile?.team_id || null,
         company_id: profile?.company_id,
+        email: user?.email,
         qa_responses: {
           email: user?.email,
           responses: answers
