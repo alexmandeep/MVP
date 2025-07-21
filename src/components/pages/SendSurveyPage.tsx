@@ -17,6 +17,12 @@ interface Employee {
   role: string
 }
 
+interface Team {
+  id: string
+  name: string
+  description?: string
+}
+
 export default function SendSurveyPage() {
   const { profile } = useProfile()
   const [surveys, setSurveys] = useState<Survey[]>([])
@@ -25,11 +31,18 @@ export default function SendSurveyPage() {
   const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [sending, setSending] = useState(false)
+  
+  // Guest invite state
+  const [teams, setTeams] = useState<Team[]>([])
+  const [guestEmail, setGuestEmail] = useState('')
+  const [selectedTeamId, setSelectedTeamId] = useState('')
+  const [isSendingGuest, setIsSendingGuest] = useState(false)
 
   useEffect(() => {
     if (profile?.company_id) {
       fetchSurveys()
       fetchEmployees()
+      fetchTeams()
     }
   }, [profile?.company_id])
 
@@ -84,6 +97,31 @@ export default function SendSurveyPage() {
       alert('An error occurred while loading employees')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchTeams = async () => {
+    if (!profile?.company_id) return
+
+    try {
+      console.log('Fetching teams for company:', profile.company_id)
+      
+      const { data, error } = await supabase
+        .from('teams')
+        .select('id, name, description')
+        .eq('company_id', profile.company_id)
+        .order('name')
+
+      if (error) {
+        console.error('Error fetching teams:', error)
+        alert(`Error loading teams: ${error.message}`)
+      } else {
+        console.log('Teams fetched:', data)
+        setTeams(data || [])
+      }
+    } catch (error) {
+      console.error('Error:', error)
+      alert('An error occurred while loading teams')
     }
   }
 
@@ -156,6 +194,46 @@ export default function SendSurveyPage() {
       alert('An error occurred while sending the survey')
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleSendGuestInvite = async () => {
+    if (!selectedSurveyId || !selectedTeamId || !guestEmail) {
+      alert('Please select a survey, a team, and enter a guest email.')
+      return
+    }
+    
+    setIsSendingGuest(true)
+    try {
+      console.log('Sending guest invite:', {
+        survey_id: selectedSurveyId,
+        team_id: selectedTeamId,
+        guest_email: guestEmail
+      })
+
+      const { data, error } = await supabase.functions.invoke('send-guest-invite', {
+        body: {
+          survey_id: selectedSurveyId,
+          team_id: selectedTeamId,
+          guest_email: guestEmail,
+        },
+      })
+      
+      if (error) throw error
+      if (data?.error) throw new Error(data.error)
+      
+      const selectedSurvey = surveys.find(s => s.id === selectedSurveyId)
+      const selectedTeam = teams.find(t => t.id === selectedTeamId)
+      alert(`✅ Guest invitation sent successfully!\n\n📋 Survey: ${selectedSurvey?.title}\n👤 Guest: ${guestEmail}\n🏢 Team: ${selectedTeam?.name}\n\nThe guest will receive an email with a secure link to complete the survey.`)
+      
+      // Reset guest form
+      setGuestEmail('')
+      setSelectedTeamId('')
+    } catch (error: any) {
+      console.error('Error sending guest invite:', error)
+      alert(`Error sending guest invitation: ${error.message}`)
+    } finally {
+      setIsSendingGuest(false)
     }
   }
 
@@ -279,6 +357,62 @@ export default function SendSurveyPage() {
               ))}
             </div>
           )}
+        </div>
+
+        {/* Guest Invite Section */}
+        <div className="card" style={{ 
+          marginTop: '2rem', 
+          border: '1px solid var(--primary-200)',
+          borderRadius: 'var(--radius-md)',
+          padding: '1.5rem',
+          backgroundColor: 'var(--primary-25)'
+        }}>
+          <div className="card-header" style={{ marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, color: 'var(--primary-700)' }}>Invite External Guest</h3>
+            <p style={{ margin: '0.5rem 0 0 0', color: 'var(--gray-600)', fontSize: '14px' }}>
+              Send this survey to a non-employee (e.g., a candidate or external consultant).
+            </p>
+          </div>
+          
+          <div className="form-group">
+            <label className="form-label">Associate with Team:</label>
+            <select
+              value={selectedTeamId}
+              onChange={(e) => setSelectedTeamId(e.target.value)}
+              className="form-input"
+              required
+            >
+              <option value="">Select a team...</option>
+              {teams.map((team) => (
+                <option key={team.id} value={team.id}>{team.name}</option>
+              ))}
+            </select>
+            {teams.length === 0 && (
+              <p style={{ color: 'var(--gray-600)', fontSize: '14px', marginTop: '5px' }}>
+                No teams found in your company.
+              </p>
+            )}
+          </div>
+          
+          <div className="form-group">
+            <label className="form-label">Guest Email Address:</label>
+            <input
+              type="email"
+              className="form-input"
+              placeholder="candidate@email.com"
+              value={guestEmail}
+              onChange={(e) => setGuestEmail(e.target.value)}
+              required
+            />
+          </div>
+          
+          <button
+            onClick={handleSendGuestInvite}
+            disabled={isSendingGuest || !selectedSurveyId || !selectedTeamId || !guestEmail}
+            className="btn btn-primary"
+          >
+            {isSendingGuest ? 'Sending Invite...' : 'Send Guest Invite'}
+          </button>
         </div>
 
         {/* Send Button */}

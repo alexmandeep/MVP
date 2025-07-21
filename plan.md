@@ -1,445 +1,583 @@
-Of course. Here is a highly detailed, phased, and granular plan to refactor your application's dashboard. This plan is designed to be executed sequentially by a developer, with clear instructions and context for each step.
-
-# MVP App Dashboard Refactoring Plan
-
-## 🎯 **Project Goal**
-
-Refactor the current modal-based dashboard into a modern, page-based layout with a persistent sidebar. All users will land on a unified "Home" page showing their pending surveys. Admins will have additional navigation options in the sidebar to access management pages (formerly modals).
+Of course. Here is a comprehensive and granular implementation plan in Markdown format. This plan is designed to be handed directly to a developer and explicitly follows the "no-CLI" constraint by providing code to be pasted directly into the Supabase dashboard editors.
 
 ---
 
-## 📂 **Project Structure Overview**
+# Implementation Plan: Guest Survey Invitations
 
-The refactoring will result in the following new file structure:
+This document outlines the step-by-step process for implementing a feature that allows company admins to send surveys to external guests (e.g., prospective hires) via a secure, single-use "magic link."
 
-```
-src/
-├── components/
-│   ├── layout/
-│   │   ├── DashboardLayout.tsx  // Main layout with header, sidebar, content
-│   │   └── Sidebar.tsx          // The navigation sidebar component
-│   ├── pages/
-│   │   ├── HomePage.tsx         // Unified home for all users
-│   │   ├── DepartmentsPage.tsx  // Was DepartmentManager.tsx
-│   │   ├── EmployeesPage.tsx      // Was EmployeeList.tsx
-│   │   ├── InvitePage.tsx         // Was InviteModal.tsx
-│   │   ├── SendSurveyPage.tsx     // Was SendSurvey.tsx
-│   │   ├── SurveysPage.tsx        // Was SurveyManager.tsx
-│   │   ├── TeamMembersPage.tsx    // Was TeamMembers.tsx
-│   │   └── TeamsPage.tsx          // Was TeamManager.tsx
-│   ├── Auth.tsx
-│   ├── Dashboard.tsx            // This will be heavily simplified
-│   └── ... (other existing components like SurveyTaking)
-├── contexts/
-│   └── ProfileContext.tsx
-└── ...
+### **Feature Overview**
+
+The goal is to enable a non-registered user to complete a survey without creating an account. The process will be:
+1.  An admin enters a guest's email, selects a survey and a team.
+2.  The system generates a unique, secure link and emails it to the guest.
+3.  The guest clicks the link and is taken to a public page to complete the survey.
+4.  The response is saved and associated with the correct company and team. The link is then deactivated.
+
+---
+
+## **Part 1: Prerequisites & Initial Setup**
+
+This section covers one-time setup tasks required before any code is written.
+
+### **Step 1.1: Configure an Email Service Provider**
+
+*   **What:** We will use **Resend** to handle the delivery of invitation emails.
+*   **Why:** Sending email directly from servers is unreliable and can lead to spam folder issues. A dedicated service like Resend ensures high deliverability and provides logging and analytics.
+*   **How:**
+    1.  Go to [Resend.com](https://resend.com) and create a free account.
+    2.  Follow their onboarding guide to **verify your domain**. This is a critical step. Emails sent from an unverified domain will fail.
+    3.  Once your domain is verified, navigate to the **API Keys** section in the Resend dashboard.
+    4.  Click **"Create API Key"**, give it a name (e.g., "Supabase App"), grant it "Full Access" sending permissions, and copy the key.
+
+### **Step 1.2: Store Secret Keys in Supabase**
+
+*   **What:** Securely store the Resend API key and your application's public URL in Supabase.
+*   **Why:** We must **never** hardcode secret keys or environment-specific URLs in our code. Supabase Secrets provides a secure, centralized place to manage these values.
+*   **How:**
+    1.  Navigate to your project in the [Supabase Dashboard](https://app.supabase.com).
+    2.  Go to **Settings** in the left sidebar, then select **Edge Functions**.
+    3.  Click on **"Add new secret"** and create the following two secrets:
+        *   **Name:** `RESEND_API_KEY`
+        *   **Value:** Paste the API key you copied from Resend.
+        *   **Name:** `SITE_URL`
+        *   **Value:** Enter the base URL of your deployed React application (e.g., `https://www.yourapp.com`). **Do not include a trailing slash.**
+
+---
+
+## **Part 2: Database Schema Update**
+
+We need a new table to track the status of guest invitations.
+
+### **Step 2.1: Create the `guest_survey_invites` Table**
+
+*   **What:** Add a new table named `guest_survey_invites` to the database.
+*   **Why:** This table will store the unique token for each guest, their email, the associated survey/company/team, and the status of the invitation (`pending`, `completed`, `expired`). This keeps guest invites separate from invites for registered users (`pending_responses`).
+*   **How:**
+    1.  Navigate to the [Supabase Dashboard](https://app.supabase.com).
+    2.  Go to the **SQL Editor** in the left sidebar.
+    3.  Click **"+ New query"**.
+    4.  Paste the following SQL code into the editor and click **"RUN"**.
+
+```sql
+-- Create a new table to store guest survey invitations
+CREATE TABLE public.guest_survey_invites (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  token text NOT NULL UNIQUE,
+  guest_email text NOT NULL,
+  survey_id uuid NOT NULL,
+  company_id uuid NOT NULL,
+  team_id uuid,
+  status text NOT NULL DEFAULT 'pending'::text,
+  expires_at timestamp with time zone NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  created_by uuid,
+  CONSTRAINT guest_survey_invites_pkey PRIMARY KEY (id),
+  CONSTRAINT guest_survey_invites_survey_id_fkey FOREIGN KEY (survey_id) REFERENCES public.surveys(id) ON DELETE CASCADE,
+  CONSTRAINT guest_survey_invites_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id) ON DELETE CASCADE,
+  CONSTRAINT guest_survey_invites_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.teams(id) ON DELETE SET NULL,
+  CONSTRAINT guest_survey_invites_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(id) ON DELETE SET NULL
+);
+
+-- Add a comment for clarity
+COMMENT ON TABLE public.guest_survey_invites IS 'Stores single-use tokens for non-registered users to take surveys.';
 ```
 
 ---
 
-## 🗓️ **Phased Execution Plan**
+## **Part 3: Backend Logic (Supabase Edge Functions)**
 
-### **Phase 1: Code Cleanup & Foundation**
+We will create three separate Edge Functions to handle the entire guest workflow securely.
 
-**Objective:** Remove redundant code and prepare the codebase for the new layout.
+> **Instructions for Developer:** For each function below, create a new file on your local machine with the specified name (e.g., `send-guest-invite.ts`). Copy the provided code into it. Then, follow the deployment steps to paste this code into the Supabase Dashboard's function editor.
 
-*   **Context Files to Read:** `components/Auth.tsx`, `App.tsx`
+### **Function 1: `send-guest-invite`**
 
-*   **Step 1.1: Simplify `Auth.tsx`**
-    1.  **File to Edit:** `components/Auth.tsx`
-    2.  **Action:** Remove the `onAuthStateChange` prop. The `ProfileProvider` already handles auth state changes globally, making this prop redundant.
-    3.  **Change (Before):**
-        ```tsx
-        interface AuthProps {
-          onAuthStateChange: () => void
-        }
-        export default function Auth({ onAuthStateChange }: AuthProps) { ... }
-        // inside handleLogin:
-        onAuthStateChange()
-        ```
-    4.  **Change (After):**
-        ```tsx
-        export default function Auth() { ... }
-        // inside handleLogin, remove the onAuthStateChange() call
-        ```
+*   **What:** This function will be called by the admin's browser. It generates the invite, saves it to the database, and sends the email.
+*   **Why:** This logic must run on the server to protect your Resend API key and to securely interact with the database using the `service_role` key, which can bypass Row Level Security policies.
+*   **How (Code):**
+    *   Create a local file named `send-guest-invite.ts`.
+    *   Copy the code below into this file.
 
-*   **Step 1.2: Update `App.tsx`**
-    1.  **File to Edit:** `App.tsx`
-    2.  **Action:** Update the `<Auth />` component invocation to remove the prop.
-    3.  **Change (Before):**
-        ```tsx
-        <Auth onAuthStateChange={() => {}} />
-        ```
-    4.  **Change (After):**
-        ```tsx
-        <Auth />
-        ```
+```typescript
+// File: send-guest-invite.ts
 
-### **Phase 2: Build the New Dashboard Layout & Home Page**
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { corsHeaders } from 'https://deno.land/x/edge_http_helper/mod.ts'
 
-**Objective:** Create the core `DashboardLayout` component and the new unified `HomePage`.
+interface GuestInvitePayload {
+  survey_id: string;
+  team_id: string;
+  guest_email: string;
+}
 
-*   **Context Files to Read:** `components/Dashboard.tsx` (to understand current structure), `contexts/ProfileContext.tsx`
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
 
-*   **Step 2.1: Create the `Sidebar` Component**
-    1.  **New File:** `src/components/layout/Sidebar.tsx`
-    2.  **Action:** Create a new component for the sidebar navigation. It will be responsible for displaying navigation links and highlighting the active view.
-    3.  **Code:**
-        ```tsx
-        // src/components/layout/Sidebar.tsx
-        import React from 'react';
-        import { useProfile } from '../../contexts/ProfileContext';
+  try {
+    const supabaseClient = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_ANON_KEY')!,
+      { global: { headers: { Authorization: req.headers.get('Authorization')! } } }
+    )
 
-        export type View = 'home' | 'employees' | 'invite' | 'departments' | 'teams' | 'surveys' | 'send-survey' | 'team-members';
+    // 1. Authenticate the user and get their profile
+    const { data: { user } } = await supabaseClient.auth.getUser()
+    if (!user) throw new Error('User not authenticated')
 
-        interface SidebarProps {
-          currentView: View;
-          setView: (view: View) => void;
-        }
+    const { data: profile, error: profileError } = await supabaseClient
+      .from('profiles')
+      .select('company_id, role')
+      .eq('id', user.id)
+      .single()
 
-        export default function Sidebar({ currentView, setView }: SidebarProps) {
-          const { profile } = useProfile();
-          const isCompanyAdmin = profile?.role === 'company_admin';
+    if (profileError || !profile) throw new Error('Could not find user profile.')
+    if (profile.role !== 'company_admin') throw new Error('User is not authorized to send invites.')
+    if (!profile.company_id) throw new Error('Admin profile is not associated with a company.')
 
-          const navItems = [
-            { id: 'home', label: 'Home', icon: '🏠', adminOnly: false },
-            { id: 'employees', label: 'Manage Employees', icon: '👥', adminOnly: true },
-            { id: 'invite', label: 'Invite Employees', icon: '✉️', adminOnly: true },
-            { id: 'departments', label: 'Manage Departments', icon: '🏢', adminOnly: true },
-            { id: 'teams', label: 'Manage Teams', icon: '👨‍💼', adminOnly: true },
-            { id: 'surveys', label: 'Manage Surveys', icon: '📊', adminOnly: true },
-            { id: 'send-survey', label: 'Send Survey', icon: '📨', adminOnly: true },
-          ];
+    // 2. Parse the request payload
+    const payload: GuestInvitePayload = await req.json()
+    const { survey_id, team_id, guest_email } = payload
+    if (!survey_id || !team_id || !guest_email) {
+      throw new Error('Missing required fields: survey_id, team_id, and guest_email.')
+    }
 
-          return (
-            <aside className="sidebar">
-              <nav>
-                <ul>
-                  {navItems.map(item => {
-                    if (item.adminOnly && !isCompanyAdmin) {
-                      return null;
-                    }
-                    return (
-                      <li key={item.id} className={currentView === item.id ? 'active' : ''}>
-                        <button onClick={() => setView(item.id as View)}>
-                          <span className="icon">{item.icon}</span>
-                          {item.label}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </nav>
-            </aside>
-          );
-        }
-        ```
-    4.  **Action:** Add basic styling for the sidebar to `src/styles.css`.
-        ```css
-        .sidebar { width: 250px; background-color: #f8f9fa; border-right: 1px solid #dee2e6; padding: 1rem; }
-        .sidebar nav ul { list-style: none; padding: 0; margin: 0; }
-        .sidebar nav li button { width: 100%; text-align: left; padding: 0.75rem 1rem; border: none; background: none; cursor: pointer; border-radius: 6px; font-size: 1rem; display: flex; align-items: center; gap: 0.75rem; }
-        .sidebar nav li.active button { background-color: var(--primary-100); color: var(--primary-700); font-weight: 600; }
-        .sidebar nav li button:hover { background-color: #e9ecef; }
-        ```
+    // 3. Generate token and expiration
+    const token = crypto.randomUUID()
+    const expires_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString() // 7 days
 
-*   **Step 2.2: Create the `HomePage` Component**
-    1.  **New File:** `src/components/pages/HomePage.tsx`
-    2.  **Action:** Create the new default page. Move the "pending surveys" logic from the old `Dashboard.tsx` into this component.
-    3.  **Code:**
-        ```tsx
-        // src/components/pages/HomePage.tsx
-        import React, { useState, useEffect } from 'react';
-        import { useProfile } from '../../contexts/ProfileContext';
-        import { supabase } from '../../supabase';
-        import SurveyTaking from '../SurveyTaking'; // This modal is kept as is
+    // 4. Use the admin client to insert the invite into the DB
+    const supabaseAdmin = createClient(
+      Deno.env.get('SUPABASE_URL')!,
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
 
-        export default function HomePage() {
-          const { user, profile } = useProfile();
-          const [pendingSurveys, setPendingSurveys] = useState<any[]>([]);
-          const [loading, setLoading] = useState(true);
-          const [showSurveyTaking, setShowSurveyTaking] = useState(false);
-          const [selectedPendingSurvey, setSelectedPendingSurvey] = useState<any>(null);
+    const { error: insertError } = await supabaseAdmin
+      .from('guest_survey_invites')
+      .insert({
+        token,
+        guest_email,
+        survey_id,
+        team_id,
+        company_id: profile.company_id,
+        expires_at,
+        created_by: user.id,
+        status: 'pending'
+      })
 
-          const fetchPendingSurveys = async () => {
-            if (!user?.id) return;
-            setLoading(true);
-            try {
-              const { data, error } = await supabase
-                .from('pending_responses')
-                .select(`id, survey_id, created_at, surveys (id, title, description, questions)`)
-                .eq('user_id', user.id)
-                .eq('status', 'pending');
-              if (error) throw error;
-              setPendingSurveys(data || []);
-            } catch (error) {
-              console.error('Error fetching pending surveys:', error);
-            } finally {
-              setLoading(false);
+    if (insertError) throw insertError
+
+    // 5. Construct the magic link and send the email via Resend
+    const magicLink = `${Deno.env.get('SITE_URL')}/survey/guest/${token}`
+    const resendApiKey = Deno.env.get('RESEND_API_KEY')
+
+    const emailResponse = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${resendApiKey}`,
+      },
+      body: JSON.stringify({
+        from: 'My App <noreply@yourverifieddomain.com>', // IMPORTANT: Use your verified domain
+        to: [guest_email],
+        subject: 'You have been invited to take a survey',
+        html: `<p>Hello,</p><p>You've been invited to complete a survey. Please click the link below to begin:</p><p><a href="${magicLink}">Start Survey</a></p><p>This link is unique to you and will expire in 7 days.</p>`,
+      }),
+    })
+
+    if (!emailResponse.ok) {
+        const errorBody = await emailResponse.json()
+        console.error('Resend API Error:', errorBody)
+        throw new Error('Failed to send email.')
+    }
+
+    return new Response(JSON.stringify({ success: true, message: 'Invite sent!' }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 200,
+    })
+
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      status: 400,
+    })
+  }
+})
+```
+*   **How (Deployment):**
+    1.  Go to the **Edge Functions** section in the Supabase Dashboard.
+    2.  Click **"Create a function"**.
+    3.  Enter the name: `send-guest-invite`.
+    4.  **Delete** the boilerplate code in the editor.
+    5.  **Copy** the entire content of your local `send-guest-invite.ts` file and **paste** it into the editor.
+    6.  Click **"Create function"** at the bottom right.
+
+### **Function 2: `get-guest-survey`**
+
+*   **What:** This public function is called by the guest's browser. It validates the token and securely retrieves the survey questions.
+*   **Why:** The guest's browser cannot have direct database access. This function acts as a secure proxy, ensuring the token is valid, active, and not expired before returning any data.
+*   **How (Code):**
+    *   Create a local file named `get-guest-survey.ts`.
+    *   Copy the code below into this file.
+
+```typescript
+// File: get-guest-survey.ts
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { corsHeaders } from 'https://deno.land/x/edge_http_helper/mod.ts'
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const { token } = await req.json()
+    if (!token) throw new Error('Token is required.')
+
+    const supabaseAdmin = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+
+    // 1. Find the invite by its token
+    const { data: invite, error: inviteError } = await supabaseAdmin
+        .from('guest_survey_invites')
+        .select(`
+            status,
+            expires_at,
+            surveys ( id, title, description, questions )
+        `)
+        .eq('token', token)
+        .single()
+
+    if (inviteError) throw new Error('Invalid invitation link.')
+
+    // 2. Validate the invitation status and expiration
+    if (invite.status !== 'pending') throw new Error('This invitation has already been completed or is no longer valid.')
+    if (new Date(invite.expires_at) < new Date()) throw new Error('This invitation has expired.')
+
+    // 3. Return the survey data
+    return new Response(JSON.stringify(invite.surveys), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+    })
+
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+    })
+  }
+})
+```
+*   **How (Deployment):** Follow the same deployment steps as the previous function, but name this one `get-guest-survey`.
+
+### **Function 3: `submit-guest-survey`**
+
+*   **What:** This public function is called when the guest submits their answers. It validates the token again, saves the response, and deactivates the token.
+*   **Why:** This is the final, secure step to record the data. Re-validating the token prevents double submissions. Updating the token status is critical to make it single-use.
+*   **How (Code):**
+    *   Create a local file named `submit-guest-survey.ts`.
+    *   Copy the code below into this file.
+
+```typescript
+// File: submit-guest-survey.ts
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { corsHeaders } from 'https://deno.land/x/edge_http_helper/mod.ts'
+
+interface SubmitPayload {
+  token: string;
+  answers: Record<string, string | number>;
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
+  try {
+    const { token, answers }: SubmitPayload = await req.json()
+    if (!token || !answers) throw new Error('Token and answers are required.')
+
+    const supabaseAdmin = createClient(
+        Deno.env.get('SUPABASE_URL')!,
+        Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    )
+
+    // 1. Find the invite again to get its details and validate it
+    const { data: invite, error: inviteError } = await supabaseAdmin
+        .from('guest_survey_invites')
+        .select('*')
+        .eq('token', token)
+        .single()
+
+    if (inviteError) throw new Error('Invalid invitation link.')
+    if (invite.status !== 'pending') throw new Error('This invitation has already been completed.')
+    if (new Date(invite.expires_at) < new Date()) throw new Error('This invitation has expired.')
+
+    // 2. Insert the response into the survey_responses table
+    const { error: responseError } = await supabaseAdmin
+        .from('survey_responses')
+        .insert({
+            survey_id: invite.survey_id,
+            user_id: null, // It's a guest
+            company_id: invite.company_id,
+            team_id: invite.team_id,
+            qa_responses: { // Storing both email and answers for context
+                guest_email: invite.guest_email,
+                responses: answers
             }
-          };
+        })
+
+    if (responseError) throw responseError
+
+    // 3. CRITICAL STEP: Deactivate the token by updating its status
+    const { error: updateError } = await supabaseAdmin
+        .from('guest_survey_invites')
+        .update({ status: 'completed' })
+        .eq('id', invite.id)
+
+    if (updateError) {
+        // Log this issue, but don't fail the request as the response was saved.
+        console.error(`CRITICAL: Failed to deactivate token ${token} after submission.`)
+    }
+
+    return new Response(JSON.stringify({ success: true, message: 'Survey submitted successfully!' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 200,
+    })
+
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+    })
+  }
+})
+```
+*   **How (Deployment):** Follow the same deployment steps, naming this function `submit-guest-survey`.
+
+---
+
+## **Part 4: Frontend Implementation (React)**
+
+This part details the changes needed in the React application.
+
+### **Step 4.1: Update the Admin "Send Survey" Page**
+
+*   **What:** Modify `components/pages/SendSurveyPage.tsx` to add a new form section for inviting guests.
+*   **Why:** Admins need a dedicated UI to enter a guest's email and the associated team.
+*   **How:**
+    1.  Open `src/components/pages/SendSurveyPage.tsx`.
+    2.  Add state variables for the guest's email, the selected team, and loading status.
+    3.  Add JSX for a new "card" below the employee selection, containing inputs for team and email.
+    4.  Implement the `handleSendGuestInvite` function to call the `send-guest-invite` Edge Function.
+
+```tsx
+// Add these imports to SendSurveyPage.tsx
+import { Team, Department } from '../../types'; // You may need to define these types
+
+// Add these state variables inside the SendSurveyPage component
+const [guestEmail, setGuestEmail] = useState('');
+const [teams, setTeams] = useState<Team[]>([]);
+const [selectedTeamId, setSelectedTeamId] = useState('');
+const [isSendingGuest, setIsSendingGuest] = useState(false);
+
+// Add a useEffect to fetch teams
+useEffect(() => {
+  const fetchTeams = async () => {
+    if (!profile?.company_id) return;
+    const { data, error } = await supabase
+      .from('teams')
+      .select('id, name')
+      .eq('company_id', profile.company_id);
+    if (data) setTeams(data);
+  };
+  if (profile?.company_id) {
+    fetchTeams();
+  }
+}, [profile]);
+
+// Add this handler function inside the SendSurveyPage component
+const handleSendGuestInvite = async () => {
+  if (!selectedSurveyId || !selectedTeamId || !guestEmail) {
+    alert('Please select a survey, a team, and enter a guest email.');
+    return;
+  }
+  setIsSendingGuest(true);
+  try {
+    const { error } = await supabase.functions.invoke('send-guest-invite', {
+      body: {
+        survey_id: selectedSurveyId,
+        team_id: selectedTeamId,
+        guest_email: guestEmail,
+      },
+    });
+    if (error) throw error;
+    alert('Guest invitation sent successfully!');
+    setGuestEmail('');
+    setSelectedTeamId('');
+  } catch (error: any) {
+    alert(`Error: ${error.message}`);
+  } finally {
+    setIsSendingGuest(false);
+  }
+};
+
+// Add this JSX inside the <div className="page-content">, perhaps after the employee list.
+<div className="card" style={{ marginTop: '2rem', border: '1px solid var(--primary-200)' }}>
+  <div className="card-header">
+    <h3>Invite External Guest</h3>
+  </div>
+  <div className="card-body">
+    <p>Send this survey to a non-employee (e.g., a candidate).</p>
+    <div className="form-group">
+      <label className="form-label">Associate with Team:</label>
+      <select
+        value={selectedTeamId}
+        onChange={(e) => setSelectedTeamId(e.target.value)}
+        className="form-input"
+        required
+      >
+        <option value="">Select a team...</option>
+        {teams.map((team) => (
+          <option key={team.id} value={team.id}>{team.name}</option>
+        ))}
+      </select>
+    </div>
+    <div className="form-group">
+      <label className="form-label">Guest Email Address:</label>
+      <input
+        type="email"
+        className="form-input"
+        placeholder="candidate@email.com"
+        value={guestEmail}
+        onChange={(e) => setGuestEmail(e.target.value)}
+        required
+      />
+    </div>
+    <button
+      onClick={handleSendGuestInvite}
+      disabled={isSendingGuest || !selectedSurveyId || !selectedTeamId || !guestEmail}
+      className="btn btn-primary"
+    >
+      {isSendingGuest ? 'Sending Invite...' : 'Send Guest Invite'}
+    </button>
+  </div>
+</div>
+```
+
+### **Step 4.2: Create the Public Guest Survey Page**
+
+*   **What:** Create a new route and a new component for guests to take the survey.
+*   **Why:** This page must be publicly accessible and should not render the admin dashboard layout. Its sole purpose is to display and submit the survey based on the URL token.
+*   **How:**
+    1.  **Routing:** In your main application router (likely in `App.tsx` or a dedicated routing file), add a new public route. *You will need to install `react-router-dom` if you haven't already.* The structure will look something like this, but you will need to adapt it to your specific routing setup.
+
+        ```tsx
+        // In your router setup
+        // <Route path="/survey/guest/:token" element={<GuestSurveyPage />} />
+        ```
+
+    2.  **Component:** Create a new file at `src/components/pages/GuestSurveyPage.tsx`. Paste the following code into it. This component will fetch, display, and submit the survey.
+
+        ```tsx
+        // File: src/components/pages/GuestSurveyPage.tsx
+        import React, { useState, useEffect } from 'react';
+        import { useParams } from 'react-router-dom'; // Assuming you use react-router-dom
+        import { supabase } from '../../supabase';
+
+        interface SurveyData {
+          id: string;
+          title: string;
+          description: string;
+          questions: any[];
+        }
+
+        export default function GuestSurveyPage() {
+          const { token } = useParams<{ token: string }>();
+          const [survey, setSurvey] = useState<SurveyData | null>(null);
+          const [loading, setLoading] = useState(true);
+          const [error, setError] = useState<string | null>(null);
+          const [answers, setAnswers] = useState<Record<string, string | number>>({});
+          const [submitting, setSubmitting] = useState(false);
+          const [completed, setCompleted] = useState(false);
 
           useEffect(() => {
-            fetchPendingSurveys();
-          }, [user]);
+            const fetchSurvey = async () => {
+              if (!token) {
+                setError('No invitation token provided.');
+                setLoading(false);
+                return;
+              }
+              try {
+                const { data, error: funcError } = await supabase.functions.invoke('get-guest-survey', {
+                  body: { token },
+                });
+                if (funcError) throw new Error(funcError.message);
+                if (data.error) throw new Error(data.error);
+                setSurvey(data);
+              } catch (e: any) {
+                setError(e.message);
+              } finally {
+                setLoading(false);
+              }
+            };
+            fetchSurvey();
+          }, [token]);
 
-          const handleStartSurvey = (pendingSurvey: any) => {
-            setSelectedPendingSurvey(pendingSurvey);
-            setShowSurveyTaking(true);
+          const handleAnswerChange = (questionId: string, value: string | number) => {
+            setAnswers(prev => ({ ...prev, [questionId]: value }));
           };
 
-          if (loading) return <div>Loading your dashboard...</div>;
+          const handleSubmit = async () => {
+             setSubmitting(true);
+             try {
+                const { error: funcError } = await supabase.functions.invoke('submit-guest-survey', {
+                    body: { token, answers }
+                });
+                if(funcError) throw new Error(funcError.message);
+                setCompleted(true);
+             } catch (e: any) {
+                alert(`Submission failed: ${e.message}`);
+             } finally {
+                setSubmitting(false);
+             }
+          };
+
+          if (loading) return <div>Loading Survey...</div>;
+          if (error) return <div>Error: {error}</div>;
+          if (completed) return <div><h1>Thank You!</h1><p>Your survey has been submitted.</p></div>;
+          if (!survey) return <div>Survey not found.</div>;
 
           return (
-            <div className="page-container">
-              <div className="page-header">
-                <h1>Welcome, {profile?.first_name || 'User'}!</h1>
-                <p>Here's a summary of your pending tasks.</p>
-              </div>
-              <div className="page-content">
-                {pendingSurveys.length > 0 ? (
-                  <div className="pending-surveys">
-                    <h4>You have {pendingSurveys.length} pending survey{pendingSurveys.length !== 1 ? 's' : ''}!</h4>
-                    {pendingSurveys.map((pendingSurvey) => (
-                      <div key={pendingSurvey.id} className="survey-item">
-                        <div className="survey-info">
-                          <h5>{pendingSurvey.surveys.title}</h5>
-                          <p>{pendingSurvey.surveys.description}</p>
-                          <p className="survey-date">Sent: {new Date(pendingSurvey.created_at).toLocaleDateString()}</p>
-                        </div>
-                        <button onClick={() => handleStartSurvey(pendingSurvey)} className="btn btn-warning">Start Survey</button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="card">
-                    <div className="card-body">
-                      <h3>All Caught Up!</h3>
-                      <p>You have no pending surveys at the moment. Great job!</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <SurveyTaking
-                pendingSurvey={selectedPendingSurvey}
-                isOpen={showSurveyTaking}
-                onClose={() => setShowSurveyTaking(false)}
-                onComplete={() => {
-                  setShowSurveyTaking(false);
-                  fetchPendingSurveys();
-                }}
-              />
+            // Note: Use your app's public page styling
+            <div style={{ padding: '2rem', maxWidth: '800px', margin: 'auto' }}>
+              <h1>{survey.title}</h1>
+              <p>{survey.description}</p>
+              <hr />
+              {survey.questions.map((q, index) => (
+                <div key={q.id || index} style={{ marginBottom: '1.5rem' }}>
+                  <h4>{index + 1}. {q.text}</h4>
+                  {/* Basic example for text input. Add more types as needed. */}
+                  <textarea
+                    rows={4}
+                    className="form-input"
+                    onChange={(e) => handleAnswerChange(q.id, e.target.value)}
+                    placeholder="Your answer..."
+                  />
+                </div>
+              ))}
+              <button onClick={handleSubmit} disabled={submitting} className="btn btn-success">
+                {submitting ? 'Submitting...' : 'Submit Survey'}
+              </button>
             </div>
           );
         }
         ```
-    4.  **Action:** Add page-level styling to `src/styles.css`.
-        ```css
-        .page-container { padding: 2rem; width: 100%; }
-        .page-header { margin-bottom: 2rem; border-bottom: 1px solid #dee2e6; padding-bottom: 1rem; }
-        .page-header h1 { margin: 0; }
-        .dashboard-layout { display: flex; min-height: 100vh; }
-        .dashboard-main-content { flex: 1; display: flex; flex-direction: column; }
-        .content-area { flex: 1; background-color: var(--gray-50); }
-        ```
 
-*   **Step 2.3: Create the `DashboardLayout` Component**
-    1.  **New File:** `src/components/layout/DashboardLayout.tsx`
-    2.  **Action:** This component orchestrates the new layout. It will contain the state for the current view and render the sidebar and the appropriate page.
-    3.  **Code:**
-        ```tsx
-        // src/components/layout/DashboardLayout.tsx
-        import React, { useState } from 'react';
-        import { useProfile } from '../../contexts/ProfileContext';
-        import Sidebar, { View } from './Sidebar';
-        import HomePage from '../pages/HomePage';
-        // Import other pages as they are created in Phase 3
-        // import EmployeesPage from '../pages/EmployeesPage';
-
-        export default function DashboardLayout() {
-            const { user, profile, loading } = useProfile();
-            const [currentView, setCurrentView] = useState<View>('home');
-
-            const handleLogout = async () => { /* ... existing logout logic ... */ };
-
-            if (loading || !profile) {
-                return <div>Loading Profile...</div>;
-            }
-
-            const renderView = () => {
-                switch (currentView) {
-                    case 'home':
-                        return <HomePage />;
-                    // Add other cases here in Phase 3 & 4
-                    // case 'employees':
-                    //     return <EmployeesPage />;
-                    default:
-                        return <HomePage />;
-                }
-            };
-
-            return (
-                <div className="dashboard-layout">
-                    <Sidebar currentView={currentView} setView={setCurrentView} />
-                    <main className="dashboard-main-content">
-                        <header className="header">
-                            <div className="header-content">
-                                <div className="logo">My App</div>
-                                <div className="nav-actions">
-                                    <span>{user?.email}</span>
-                                    <button onClick={handleLogout} className="btn btn-danger btn-sm">Logout</button>
-                                </div>
-                            </div>
-                        </header>
-                        <div className="content-area">
-                            {renderView()}
-                        </div>
-                    </main>
-                </div>
-            );
-        }
-        ```
-
-*   **Step 2.4: Gut and Refactor the main `Dashboard.tsx`**
-    1.  **File to Edit:** `components/Dashboard.tsx`
-    2.  **Action:** Remove almost all content from this file. It will now just act as a wrapper that renders the new `DashboardLayout`.
-    3.  **Change (Before):** The file is very large.
-    4.  **Change (After):**
-        ```tsx
-        // src/components/Dashboard.tsx
-        import React from 'react';
-        import { useProfile } from '../contexts/ProfileContext';
-        import DashboardLayout from './layout/DashboardLayout';
-
-        export default function Dashboard() {
-          const { profile } = useProfile();
-
-          if (!profile) {
-            return <div>Loading dashboard...</div>;
-          }
-
-          return <DashboardLayout />;
-        }
-        ```
-
-### **Phase 3: Convert Modals to Pages**
-
-**Objective:** Systematically convert each admin modal component into a full-page component.
-
-*   **Context Files to Read:** `components/DepartmentManager.tsx`, `components/EmployeeList.tsx`, `components/TeamManager.tsx`, `components/SurveyManager.tsx`, `components/SendSurvey.tsx`, `components/InviteModal.tsx`
-
-*   **Step 3.1: Convert `DepartmentManager` to `DepartmentsPage`**
-    1.  **New File:** `src/components/pages/DepartmentsPage.tsx`
-    2.  **Action:** Copy the code from `DepartmentManager.tsx`.
-    3.  **Refactor:**
-        *   Remove `isOpen` and `onClose` props.
-        *   Remove the top-level `modal-overlay` and `modal-content` divs. Wrap the content in a `<div className="page-container">`.
-        *   Remove the "Close" button (`✕`).
-        *   Rename the component to `DepartmentsPage`.
-        *   The `useEffect` should now fetch data on component mount, without depending on `isOpen`.
-
-*   **Step 3.2: Convert `EmployeeList` to `EmployeesPage`**
-    1.  **New File:** `src/components/pages/EmployeesPage.tsx`
-    2.  **Action & Refactor:** Follow the same process as in Step 3.1.
-
-*   **Step 3.3: Convert `InviteModal` to `InvitePage`**
-    1.  **New File:** `src/components/pages/InvitePage.tsx`
-    2.  **Action & Refactor:** Follow the same process as in Step 3.1. The `onClose` logic should now simply clear the form fields.
-
-*   **Step 3.4: Convert `SurveyManager` to `SurveysPage`**
-    1.  **New File:** `src/components/pages/SurveysPage.tsx`
-    2.  **Action & Refactor:** Follow the same process as in Step 3.1. Note that this component has a "modal within a modal" for viewing questions. This can remain as a modal, as it's a detail view, not a main feature.
-
-*   **Step 3.5: Convert `SendSurvey` to `SendSurveyPage`**
-    1.  **New File:** `src/components/pages/SendSurveyPage.tsx`
-    2.  **Action & Refactor:** Follow the same process as in Step 3.1.
-
-*   **Step 3.6: Integrate New Pages into `DashboardLayout`**
-    1.  **File to Edit:** `src/components/layout/DashboardLayout.tsx`
-    2.  **Action:** Import all the new page components and add them to the `renderView` switch statement.
-    3.  **Code Snippet (to add):**
-        ```tsx
-        import DepartmentsPage from '../pages/DepartmentsPage';
-        import EmployeesPage from '../pages/EmployeesPage';
-        // ... import others
-
-        const renderView = () => {
-            switch (currentView) {
-                case 'home': return <HomePage />;
-                case 'departments': return <DepartmentsPage />;
-                case 'employees': return <EmployeesPage />;
-                // ... add all other cases
-                default: return <HomePage />;
-            }
-        };
-        ```
-
-### **Phase 4: Fix Inter-Component Communication**
-
-**Objective:** Replace the `window.dispatchEvent` logic for viewing team members with a proper React state-lifting pattern.
-
-*   **Context Files to Read:** `components/TeamManager.tsx`, `components/TeamMembers.tsx`, `components/Dashboard.tsx` (old version)
-
-*   **Step 4.1: Convert `TeamManager` and `TeamMembers` to Pages**
-    1.  **New Files:** `src/components/pages/TeamsPage.tsx` and `src/components/pages/TeamMembersPage.tsx`.
-    2.  **Action & Refactor:** Convert both `TeamManager.tsx` and `TeamMembers.tsx` to page components, following the pattern from Phase 3.
-        *   `TeamsPage.tsx` will need a new prop: `onViewMembers: (teamId: string) => void`.
-        *   `TeamMembersPage.tsx` will need a prop `teamId: string`.
-
-*   **Step 4.2: Update `TeamsPage` to use the callback**
-    1.  **File to Edit:** `src/components/pages/TeamsPage.tsx`
-    2.  **Action:** Remove the old `handleViewMembers` function that dispatched a window event. Instead, call the new prop.
-    3.  **Change (Before):**
-        ```tsx
-        const handleViewMembers = (teamId: string) => {
-            window.dispatchEvent(new CustomEvent('openTeamMembers', { detail: { teamId } }))
-        }
-        ```
-    4.  **Change (After):**
-        ```tsx
-        // Inside the component definition:
-        // { isOpen, onClose, onViewMembers }: TeamsPageProps
-
-        // Inside the table row:
-        <button onClick={() => onViewMembers(team.id)} ...>
-          View Members
-        </button>
-        ```
-
-*   **Step 4.3: Manage State in `DashboardLayout`**
-    1.  **File to Edit:** `src/components/layout/DashboardLayout.tsx`
-    2.  **Action:** Add state to hold the `teamId` for the members page and a handler function to switch the view.
-    3.  **Code Snippet (to add):**
-        ```tsx
-        // Add to state
-        const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
-
-        // Add handler function
-        const handleViewTeamMembers = (teamId: string) => {
-            setSelectedTeamId(teamId);
-            setCurrentView('team-members');
-        };
-
-        // Update the renderView function
-        const renderView = () => {
-            switch (currentView) {
-                // ... other cases
-                case 'teams':
-                    return <TeamsPage onViewMembers={handleViewTeamMembers} />;
-                case 'team-members':
-                    return selectedTeamId ? <TeamMembersPage teamId={selectedTeamId} /> : <p>No team selected. Please go back to Teams.</p>;
-                // ...
-            }
-        };
-        ```
-    4.  **Important:** The `team-members` view should *not* be in the sidebar. It's only accessible by navigating from the `TeamsPage`.
-
-### **Phase 5: Final Review & Polish**
-
-**Objective:** Ensure all old logic is removed and the new architecture is fully functional.
-
-*   **Step 5.1: Clean up original `Dashboard.tsx`**
-    1.  **File to Edit:** `components/Dashboard.tsx`
-    2.  **Action:** Verify that all modal state variables (`showInviteModal`, etc.), event listeners, and the large JSX block rendering the "Admin vs Employee" dashboards are completely gone. The file should be minimal, as shown in Step 2.4.
-
-*   
+This concludes the implementation plan. By following these steps, you will have a fully functional and secure system for guest survey invitations.
