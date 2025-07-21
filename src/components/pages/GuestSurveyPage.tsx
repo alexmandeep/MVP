@@ -8,6 +8,19 @@ interface SurveyData {
   questions: any[]
 }
 
+interface QuestionOption {
+  label: string
+  value: number
+  side: string
+}
+
+interface SurveyQuestion {
+  questionId: string
+  parameter: string
+  question: string
+  options: QuestionOption[]
+}
+
 interface GuestSurveyPageProps {
   token: string
 }
@@ -16,7 +29,11 @@ export default function GuestSurveyPage({ token }: GuestSurveyPageProps) {
   const [survey, setSurvey] = useState<SurveyData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [answers, setAnswers] = useState<Record<string, string | number>>({})
+  const [answers, setAnswers] = useState<Record<string, {
+    questionId: string
+    value: number
+    parameter: string
+  }>>({})
   const [submitting, setSubmitting] = useState(false)
   const [completed, setCompleted] = useState(false)
 
@@ -51,8 +68,15 @@ export default function GuestSurveyPage({ token }: GuestSurveyPageProps) {
     fetchSurvey()
   }, [token])
 
-  const handleAnswerChange = (questionId: string, value: string | number) => {
-    setAnswers(prev => ({ ...prev, [questionId]: value }))
+  const handleAnswerChange = (questionId: string, value: number, parameter: string) => {
+    setAnswers(prev => ({ 
+      ...prev, 
+      [questionId]: {
+        questionId,
+        value,
+        parameter
+      }
+    }))
   }
 
   const handleSubmit = async () => {
@@ -231,121 +255,10 @@ export default function GuestSurveyPage({ token }: GuestSurveyPageProps) {
         {/* Form */}
         <div style={{ padding: '2rem' }}>
           {survey.questions && survey.questions.length > 0 ? (
-            survey.questions.map((question, index) => {
-              const questionId = question.id || `question_${index}`
-              const answer = answers[questionId] || ''
+            survey.questions.map((question: SurveyQuestion, index) => {
+              const questionId = question.questionId
+              const selectedAnswer = answers[questionId]
               
-              const renderQuestion = () => {
-                switch (question.type) {
-                  case 'rating':
-                    const scale = question.scale || 5
-                    return (
-                      <div>
-                        <div style={{ marginBottom: '15px' }}>
-                          <h4 style={{ 
-                            margin: '0 0 10px 0',
-                            color: 'var(--gray-800)',
-                            fontSize: '1.1rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '10px'
-                          }}>
-                            {index + 1}. {question.text || question.question || 'Question'}
-                            {question.required && (
-                              <span style={{ color: 'var(--error-500)', fontSize: '18px' }}>*</span>
-                            )}
-                          </h4>
-                          <p style={{ 
-                            margin: '0 0 15px 0', 
-                            fontSize: '14px',
-                            color: 'var(--gray-600)',
-                            fontStyle: 'italic'
-                          }}>
-                            Rate from 1 (Poor) to {scale} (Excellent)
-                          </p>
-                        </div>
-
-                        <div style={{ 
-                          display: 'flex', 
-                          gap: '10px',
-                          justifyContent: 'center',
-                          alignItems: 'center',
-                          flexWrap: 'wrap'
-                        }}>
-                          {Array.from({ length: scale }, (_, i) => i + 1).map((rating) => (
-                            <label key={rating} style={{
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              cursor: 'pointer',
-                              padding: '10px',
-                              borderRadius: 'var(--radius-md)',
-                              backgroundColor: answer === rating ? 'var(--primary-600)' : 'white',
-                              color: answer === rating ? 'white' : 'var(--gray-700)',
-                              border: '2px solid',
-                              borderColor: answer === rating ? 'var(--primary-600)' : 'var(--gray-300)',
-                              transition: 'all 0.2s ease',
-                              minWidth: '50px'
-                            }}>
-                              <input
-                                type="radio"
-                                name={questionId}
-                                value={rating}
-                                checked={answer === rating}
-                                onChange={(e) => handleAnswerChange(questionId, parseInt(e.target.value))}
-                                style={{ display: 'none' }}
-                              />
-                              <span style={{ 
-                                fontSize: '18px', 
-                                fontWeight: 'bold',
-                                marginBottom: '5px'
-                              }}>
-                                {rating}
-                              </span>
-                              <span style={{ fontSize: '12px', textAlign: 'center' }}>
-                                {rating === 1 ? 'Poor' : rating === scale ? 'Excellent' : ''}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    )
-
-                  case 'text':
-                  default:
-                    return (
-                      <div>
-                        <h4 style={{ 
-                          margin: '0 0 1rem 0',
-                          color: 'var(--gray-800)',
-                          fontSize: '1.1rem',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '10px'
-                        }}>
-                          {index + 1}. {question.text || question.question || 'Question'}
-                          {question.required && (
-                            <span style={{ color: 'var(--error-500)', fontSize: '18px' }}>*</span>
-                          )}
-                        </h4>
-                        <textarea
-                          rows={4}
-                          className="form-input"
-                          style={{ 
-                            width: '100%',
-                            minHeight: '100px',
-                            resize: 'vertical',
-                            fontSize: '16px'
-                          }}
-                          onChange={(e) => handleAnswerChange(questionId, e.target.value)}
-                          placeholder="Enter your answer here..."
-                          value={answer}
-                        />
-                      </div>
-                    )
-                }
-              }
-
               return (
                 <div key={questionId} style={{ 
                   marginBottom: '2rem',
@@ -354,7 +267,97 @@ export default function GuestSurveyPage({ token }: GuestSurveyPageProps) {
                   borderRadius: 'var(--radius-md)',
                   border: '1px solid var(--gray-200)'
                 }}>
-                  {renderQuestion()}
+                  <div style={{ marginBottom: '20px' }}>
+                    <h4 style={{ 
+                      margin: '0 0 10px 0',
+                      color: 'var(--gray-800)',
+                      fontSize: '1.1rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px'
+                    }}>
+                      {index + 1}. {question.question}
+                    </h4>
+                    <p style={{ 
+                      margin: '0 0 15px 0', 
+                      fontSize: '14px',
+                      color: 'var(--gray-600)',
+                      fontStyle: 'italic'
+                    }}>
+                      {question.parameter}
+                    </p>
+                  </div>
+
+                  <div style={{ 
+                    display: 'flex', 
+                    flexDirection: 'column',
+                    gap: '10px'
+                  }}>
+                    {question.options.map((option) => (
+                      <label key={`${questionId}-${option.value}`} style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        padding: '15px 20px',
+                        borderRadius: 'var(--radius-md)',
+                        backgroundColor: selectedAnswer?.value === option.value ? 'var(--primary-100)' : 'white',
+                        border: '2px solid',
+                        borderColor: selectedAnswer?.value === option.value ? 'var(--primary-600)' : 'var(--gray-300)',
+                        transition: 'all 0.2s ease',
+                        position: 'relative'
+                      }}>
+                        <input
+                          type="radio"
+                          name={questionId}
+                          value={option.value}
+                          checked={selectedAnswer?.value === option.value}
+                          onChange={() => handleAnswerChange(questionId, option.value, question.parameter)}
+                          style={{ 
+                            position: 'absolute',
+                            opacity: 0,
+                            width: 0,
+                            height: 0
+                          }}
+                        />
+                        <div style={{
+                          width: '20px',
+                          height: '20px',
+                          borderRadius: '50%',
+                          border: '2px solid',
+                          borderColor: selectedAnswer?.value === option.value ? 'var(--primary-600)' : 'var(--gray-400)',
+                          marginRight: '15px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0
+                        }}>
+                          {selectedAnswer?.value === option.value && (
+                            <div style={{
+                              width: '10px',
+                              height: '10px',
+                              borderRadius: '50%',
+                              backgroundColor: 'var(--primary-600)'
+                            }} />
+                          )}
+                        </div>
+                        <span style={{ 
+                          fontSize: '16px',
+                          color: selectedAnswer?.value === option.value ? 'var(--primary-700)' : 'var(--gray-700)',
+                          fontWeight: selectedAnswer?.value === option.value ? '600' : '400'
+                        }}>
+                          {option.label}
+                        </span>
+                        <span style={{
+                          marginLeft: 'auto',
+                          fontSize: '14px',
+                          color: 'var(--gray-500)',
+                          fontStyle: 'italic'
+                        }}>
+                          ({option.side}: {option.value > 0 ? '+' : ''}{option.value})
+                        </span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
               )
             })

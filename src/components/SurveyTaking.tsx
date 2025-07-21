@@ -9,18 +9,26 @@ interface SurveyTakingProps {
   onComplete: () => void
 }
 
+interface QuestionOption {
+  label: string
+  value: number
+  side: string
+}
+
 interface Question {
-  id: string
-  text: string
-  type: string
-  scale?: number
-  required?: boolean
-  options?: string[]
+  questionId: string
+  parameter: string
+  question: string
+  options: QuestionOption[]
 }
 
 export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplete }: SurveyTakingProps) {
   const { user, profile } = useProfile()
-  const [answers, setAnswers] = useState<Record<string, string | number>>({})
+  const [answers, setAnswers] = useState<Record<string, {
+    questionId: string
+    value: number
+    parameter: string
+  }>>({})
   const [submitting, setSubmitting] = useState(false)
 
   if (!isOpen || !pendingSurvey) return null
@@ -28,16 +36,20 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
   const survey = pendingSurvey.surveys
   const questions: Question[] = survey.questions || []
 
-  const handleAnswerChange = (questionId: string, value: string | number) => {
+  const handleAnswerChange = (questionId: string, value: number, parameter: string) => {
     setAnswers(prev => ({
       ...prev,
-      [questionId]: value
+      [questionId]: {
+        questionId,
+        value,
+        parameter
+      }
     }))
   }
 
   const validateAnswers = () => {
     for (const question of questions) {
-      if (question.required && !answers[question.id]) {
+      if (!answers[question.questionId]) {
         return false
       }
     }
@@ -66,12 +78,7 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
         company_id: profile?.company_id,
         qa_responses: {
           email: user?.email,
-          responses: questions.map((question: Question) => ({
-            questionId: question.id,
-            question: question.text,
-            answer: answers[question.id],
-            type: question.type
-          }))
+          responses: answers
         }
       }
 
@@ -100,16 +107,13 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
 
       if (deleteError) {
         console.error('Error deleting pending response:', deleteError)
-        // Don't alert here as the survey was successfully submitted
-        console.warn('Survey submitted but failed to remove from pending list')
       } else {
-        console.log('Pending response removed successfully:', deleteData)
-        console.log('Deleted record count:', deleteData?.length || 0)
+        console.log('Pending response deleted:', deleteData)
       }
 
-      alert(`✅ Survey submitted successfully!\n\nThank you for your feedback. Your responses have been recorded.`)
+      alert('✅ Survey submitted successfully! Thank you for your feedback.')
       
-      // Reset form and close
+      // Reset state
       setAnswers({})
       onComplete()
 
@@ -122,244 +126,193 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
   }
 
   const renderQuestion = (question: Question, index: number) => {
-    const answer = answers[question.id]
+    const questionId = question.questionId
+    const selectedAnswer = answers[questionId]
 
-    switch (question.type) {
-      case 'rating':
-        const scale = question.scale || 5
-        return (
-          <div key={question.id} className="card" style={{ marginBottom: '20px' }}>
-            <div className="card-body">
-              <div style={{ marginBottom: '15px' }}>
-                <h3 style={{ 
-                  margin: '0 0 10px 0',
-                  color: 'var(--gray-700)',
+    return (
+      <div key={questionId} className="card" style={{ marginBottom: '20px' }}>
+        <div className="card-body">
+          <div style={{ marginBottom: '20px' }}>
+            <h3 style={{ 
+              margin: '0 0 10px 0',
+              color: 'var(--gray-700)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}>
+              Question {index + 1}
+            </h3>
+            <p style={{ 
+              margin: '0 0 15px 0', 
+              fontSize: '16px',
+              lineHeight: '1.5',
+              color: 'var(--gray-900)'
+            }}>
+              {question.question}
+            </p>
+            <p style={{ 
+              margin: '0 0 15px 0', 
+              fontSize: '14px',
+              color: 'var(--gray-600)',
+              fontStyle: 'italic'
+            }}>
+              {question.parameter}
+            </p>
+          </div>
+
+          <div style={{ 
+            display: 'flex', 
+            flexDirection: 'column',
+            gap: '10px'
+          }}>
+            {question.options.map((option) => (
+              <label key={`${questionId}-${option.value}`} style={{
+                display: 'flex',
+                alignItems: 'center',
+                cursor: 'pointer',
+                padding: '15px 20px',
+                borderRadius: 'var(--radius-md)',
+                backgroundColor: selectedAnswer?.value === option.value ? 'var(--primary-100)' : 'white',
+                border: '2px solid',
+                borderColor: selectedAnswer?.value === option.value ? 'var(--primary-600)' : 'var(--gray-300)',
+                transition: 'all 0.2s ease',
+                position: 'relative'
+              }}>
+                <input
+                  type="radio"
+                  name={questionId}
+                  value={option.value}
+                  checked={selectedAnswer?.value === option.value}
+                  onChange={() => handleAnswerChange(questionId, option.value, question.parameter)}
+                  style={{ 
+                    position: 'absolute',
+                    opacity: 0,
+                    width: 0,
+                    height: 0
+                  }}
+                />
+                <div style={{
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  border: '2px solid',
+                  borderColor: selectedAnswer?.value === option.value ? 'var(--primary-600)' : 'var(--gray-400)',
+                  marginRight: '15px',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '10px'
+                  justifyContent: 'center',
+                  flexShrink: 0
                 }}>
-                  Question {index + 1}
-                  {question.required && (
-                    <span style={{ color: 'var(--error-500)', fontSize: '18px' }}>*</span>
+                  {selectedAnswer?.value === option.value && (
+                    <div style={{
+                      width: '10px',
+                      height: '10px',
+                      borderRadius: '50%',
+                      backgroundColor: 'var(--primary-600)'
+                    }} />
                   )}
-                </h3>
-                <p style={{ 
-                  margin: '0 0 15px 0', 
+                </div>
+                <span style={{ 
                   fontSize: '16px',
-                  lineHeight: '1.5',
-                  color: 'var(--gray-900)'
+                  color: selectedAnswer?.value === option.value ? 'var(--primary-700)' : 'var(--gray-700)',
+                  fontWeight: selectedAnswer?.value === option.value ? '600' : '400'
                 }}>
-                  {question.text}
-                </p>
-                <p style={{ 
-                  margin: '0 0 15px 0', 
+                  {option.label}
+                </span>
+                <span style={{
+                  marginLeft: 'auto',
                   fontSize: '14px',
-                  color: 'var(--gray-600)',
+                  color: 'var(--gray-500)',
                   fontStyle: 'italic'
                 }}>
-                  Rate from 1 (Poor) to {scale} (Excellent)
-                </p>
-              </div>
-
-            <div style={{ 
-              display: 'flex', 
-              gap: '10px',
-              justifyContent: 'center',
-              alignItems: 'center',
-              flexWrap: 'wrap'
-            }}>
-              {Array.from({ length: scale }, (_, i) => i + 1).map((rating) => (
-                <label key={rating} style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  cursor: 'pointer',
-                  padding: '10px',
-                  borderRadius: 'var(--radius-md)',
-                  backgroundColor: answer === rating ? 'var(--primary-600)' : 'white',
-                  color: answer === rating ? 'white' : 'var(--gray-700)',
-                  border: '2px solid',
-                  borderColor: answer === rating ? 'var(--primary-600)' : 'var(--gray-300)',
-                  transition: 'all 0.2s ease',
-                  minWidth: '50px'
-                }}>
-                  <input
-                    type="radio"
-                    name={question.id}
-                    value={rating}
-                    checked={answer === rating}
-                    onChange={(e) => handleAnswerChange(question.id, parseInt(e.target.value))}
-                    style={{ display: 'none' }}
-                  />
-                  <span style={{ 
-                    fontSize: '18px', 
-                    fontWeight: 'bold',
-                    marginBottom: '5px'
-                  }}>
-                    {rating}
-                  </span>
-                  <span style={{ fontSize: '12px', textAlign: 'center' }}>
-                    {rating === 1 ? 'Poor' : rating === scale ? 'Excellent' : ''}
-                  </span>
-                </label>
-              ))}
-            </div>
-            </div>
+                  ({option.side}: {option.value > 0 ? '+' : ''}{option.value})
+                </span>
+              </label>
+            ))}
           </div>
-        )
-
-      case 'text':
-        return (
-          <div key={question.id} className="card" style={{ marginBottom: '20px' }}>
-            <div className="card-body">
-              <div style={{ marginBottom: '15px' }}>
-                <h3 style={{ 
-                  margin: '0 0 10px 0',
-                  color: 'var(--gray-700)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '10px'
-                }}>
-                  Question {index + 1}
-                  {question.required && (
-                    <span style={{ color: 'var(--error-500)', fontSize: '18px' }}>*</span>
-                  )}
-                </h3>
-                <p style={{ 
-                  margin: '0 0 15px 0', 
-                  fontSize: '16px',
-                  lineHeight: '1.5',
-                  color: 'var(--gray-900)'
-                }}>
-                  {question.text}
-                </p>
-              </div>
-
-              <textarea
-                value={answer || ''}
-                onChange={(e) => handleAnswerChange(question.id, e.target.value)}
-                placeholder="Type your answer here..."
-                rows={4}
-                className="form-input"
-                style={{
-                  fontSize: '16px',
-                  resize: 'vertical',
-                  fontFamily: 'inherit'
-                }}
-              />
-            </div>
-          </div>
-        )
-
-      default:
-        return (
-          <div key={question.id} className="card" style={{
-            backgroundColor: 'var(--warning-50)',
-            marginBottom: '20px',
-            border: '1px solid var(--warning-200)'
-          }}>
-            <div className="card-body">
-              <p style={{ margin: 0, color: 'var(--warning-600)' }}>
-                Question type "{question.type}" is not supported yet.
-              </p>
-            </div>
-          </div>
-        )
-    }
+        </div>
+      </div>
+    )
   }
 
   const getAnsweredCount = () => {
-    return questions.filter((q: Question) => answers[q.id] !== undefined && answers[q.id] !== '').length
-  }
-
-  const getRequiredUnanswered = () => {
-    return questions.filter((q: Question) => q.required && (!answers[q.id] || answers[q.id] === '')).length
+    return questions.filter((q: Question) => answers[q.questionId] !== undefined).length
   }
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{
-        width: '800px',
-        maxHeight: '90vh'
-      }}>
-        {/* Header */}
+      <div className="modal-content" style={{ maxWidth: '900px' }}>
         <div className="modal-header">
-          <div style={{ flex: 1 }}>
-            <h2 className="modal-title">
-              {survey.title}
-            </h2>
+          <div>
+            <h2 className="modal-title">{survey.title}</h2>
             {survey.description && (
-              <p style={{ margin: '0 0 15px 0', color: 'var(--gray-600)' }}>
+              <p style={{ 
+                margin: '0.5rem 0 0 0', 
+                color: 'var(--gray-600)',
+                fontSize: '16px' 
+              }}>
                 {survey.description}
               </p>
             )}
-            <div style={{ 
-              display: 'flex', 
-              gap: '20px',
-              fontSize: '14px',
-              color: 'var(--gray-600)'
-            }}>
-              <span>
-                📊 Progress: {getAnsweredCount()}/{questions.length} questions
-              </span>
-              {getRequiredUnanswered() > 0 && (
-                <span style={{ color: 'var(--error-500)' }}>
-                  ⚠️ {getRequiredUnanswered()} required questions remaining
-                </span>
-              )}
-            </div>
           </div>
-          <button
-            onClick={onClose}
-            className="close-btn"
-          >
-            ×
-          </button>
+          <button className="close-btn" onClick={onClose}>×</button>
         </div>
 
-        {/* Questions */}
-        <div className="modal-body">
-          {questions.length === 0 ? (
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '40px',
-              color: 'var(--gray-600)'
+        <div style={{ 
+          padding: '0 2rem',
+          backgroundColor: 'var(--primary-50)',
+          borderBottom: '1px solid var(--primary-200)'
+        }}>
+          <div style={{
+            padding: '1rem 0',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          }}>
+            <span style={{ 
+              color: 'var(--primary-700)',
+              fontWeight: '600'
             }}>
-              No questions found for this survey.
+              Progress: {getAnsweredCount()} of {questions.length} questions answered
+            </span>
+            <div style={{
+              width: '200px',
+              height: '8px',
+              backgroundColor: 'var(--gray-200)',
+              borderRadius: '4px',
+              overflow: 'hidden'
+            }}>
+              <div style={{
+                width: `${(getAnsweredCount() / questions.length) * 100}%`,
+                height: '100%',
+                backgroundColor: 'var(--primary-600)',
+                transition: 'width 0.3s ease'
+              }} />
             </div>
-          ) : (
-            <>
-              {questions.map((question: Question, index: number) => 
-                renderQuestion(question, index)
-              )}
-              
-              {/* Submit Button */}
-              <div style={{ 
-                display: 'flex', 
-                justifyContent: 'flex-end', 
-                gap: '15px',
-                borderTop: '1px solid var(--gray-200)',
-                paddingTop: '25px',
-                marginTop: '20px'
-              }}>
-                <button
-                  onClick={onClose}
-                  className="btn btn-secondary"
-                  style={{ fontSize: '16px' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSubmit}
-                  disabled={submitting || !validateAnswers()}
-                  className="btn btn-success"
-                  style={{ fontSize: '16px' }}
-                >
-                  {submitting ? 'Submitting...' : `Submit Survey (${getAnsweredCount()}/${questions.length})`}
-                </button>
-              </div>
-            </>
-          )}
+          </div>
+        </div>
+
+        <div className="modal-body" style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+          {questions.map((question, index) => renderQuestion(question, index))}
+        </div>
+
+        <div style={{ 
+          padding: '1.5rem 2rem', 
+          borderTop: '1px solid var(--gray-200)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <button onClick={onClose} className="btn btn-secondary">
+            Cancel
+          </button>
+          <button 
+            onClick={handleSubmit} 
+            disabled={submitting || !validateAnswers()}
+            className="btn btn-success"
+          >
+            {submitting ? 'Submitting...' : 'Submit Survey'}
+          </button>
         </div>
       </div>
     </div>
