@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { supabase } from '../../supabase'
 import { useProfile } from '../../contexts/ProfileContext'
-import { useNavigate } from 'react-router-dom'
 
 interface Survey {
   id: string
@@ -20,7 +19,6 @@ interface Employee {
 
 export default function SendSurveyPage() {
   const { profile } = useProfile()
-  const navigate = useNavigate()
   const [surveys, setSurveys] = useState<Survey[]>([])
   const [employees, setEmployees] = useState<Employee[]>([])
   const [selectedSurveyId, setSelectedSurveyId] = useState<string>('')
@@ -147,12 +145,11 @@ export default function SendSurveyPage() {
         console.log('Pending responses created:', data)
         
         const selectedSurvey = surveys.find(s => s.id === selectedSurveyId)
-        alert(`Survey sent successfully!\n\nSurvey: ${selectedSurvey?.title}\nRecipients: ${selectedEmployeeIds.size} employee${selectedEmployeeIds.size !== 1 ? 's' : ''}\n\nEmployees will now see this survey in their dashboard.`)
+        alert(`✅ Survey sent successfully!\n\n📋 Survey: ${selectedSurvey?.title}\n👥 Recipients: ${selectedEmployeeIds.size} employee${selectedEmployeeIds.size !== 1 ? 's' : ''}\n\nEmployees will now see this survey in their dashboard.`)
 
-        // Reset form and navigate back
+        // Reset form
         setSelectedSurveyId('')
         setSelectedEmployeeIds(new Set())
-        navigate('/') // Navigate back to home page or wherever appropriate
       }
     } catch (error) {
       console.error('Error:', error)
@@ -293,12 +290,6 @@ export default function SendSurveyPage() {
           paddingTop: '20px',
           marginTop: '30px'
         }}>
-          <button
-            onClick={() => navigate('/')}
-            className="btn btn-secondary"
-          >
-            Cancel
-          </button>
           <button
             onClick={handleSendSurvey}
             disabled={!selectedSurveyId || selectedEmployeeIds.size === 0 || sending}
