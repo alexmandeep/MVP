@@ -82,6 +82,12 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
         }
       }
 
+      console.log('DEBUG: Full response data being sent to database:')
+      console.log(JSON.stringify(responseData, null, 2))
+      console.log('DEBUG: qa_responses JSON:')
+      console.log(JSON.stringify(responseData.qa_responses, null, 2))
+      console.log('DEBUG: Is qa_responses valid JSON?', typeof responseData.qa_responses === 'object')
+
       // Insert into survey_responses table
       const { data: responseResult, error: responseError } = await supabase
         .from('survey_responses')
