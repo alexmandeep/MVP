@@ -488,3 +488,137 @@ body {
 .form-input::placeholder {
   color: var(--gray-400);
 }
+/* Sidebar styles */
+.sidebar { 
+  width: 250px; 
+  background-color: #f8f9fa; 
+  border-right: 1px solid #dee2e6; 
+  padding: 1rem; 
+}
+
+.sidebar nav ul { 
+  list-style: none; 
+  padding: 0; 
+  margin: 0; 
+}
+
+.sidebar nav li button { 
+  width: 100%; 
+  text-align: left; 
+  padding: 0.75rem 1rem; 
+  border: none; 
+  background: none; 
+  cursor: pointer; 
+  border-radius: 6px; 
+  font-size: 1rem; 
+  display: flex; 
+  align-items: center; 
+  gap: 0.75rem; 
+}
+
+.sidebar nav li.active button { 
+  background-color: var(--primary-100); 
+  color: var(--primary-700); 
+  font-weight: 600; 
+}
+
+.sidebar nav li button:hover { 
+  background-color: #e9ecef; 
+}
+
+/* Page layout styles */
+.page-container { 
+  padding: 2rem; 
+  width: 100%; 
+}
+
+.page-header { 
+  margin-bottom: 2rem; 
+  border-bottom: 1px solid #dee2e6; 
+  padding-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.page-header h1 { 
+  margin: 0; 
+}
+
+.dashboard-layout { 
+  display: flex; 
+  min-height: 100vh; 
+}
+
+.dashboard-main-content { 
+  flex: 1; 
+  display: flex; 
+  flex-direction: column; 
+}
+
+.content-area { 
+  flex: 1; 
+  background-color: var(--gray-50); 
+}
+EOF < /dev/null
+/* Survey item styles */
+.survey-item {
+  background-color: white;
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  margin-bottom: 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.survey-info h5 {
+  margin: 0 0 0.5rem 0;
+  color: var(--gray-900);
+}
+
+.survey-info p {
+  margin: 0.25rem 0;
+  color: var(--gray-600);
+}
+
+.survey-date {
+  font-size: 0.875rem;
+  color: var(--gray-500);
+}
+
+.pending-surveys h4 {
+  margin-bottom: 1rem;
+  color: var(--gray-800);
+}
+
+/* Header styles */
+.header {
+  background-color: white;
+  border-bottom: 1px solid var(--gray-200);
+  padding: 1rem 2rem;
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.logo {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--primary-600);
+}
+
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.nav-actions span {
+  color: var(--gray-600);
+  font-size: 0.875rem;
+}

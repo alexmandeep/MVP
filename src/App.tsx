@@ -30,7 +30,7 @@ function AppContent() {
   return (
     <div>
       {!user ? (
-        <Auth onAuthStateChange={() => {}} />
+        <Auth />
       ) : (
         <Dashboard />
       )}

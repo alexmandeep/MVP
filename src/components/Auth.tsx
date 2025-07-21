@@ -1,11 +1,7 @@
 import React, { useState } from 'react'
 import { supabase } from '../supabase'
 
-interface AuthProps {
-  onAuthStateChange: () => void
-}
-
-export default function Auth({ onAuthStateChange }: AuthProps) {
+export default function Auth() {
   const [loading, setLoading] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -41,7 +37,6 @@ export default function Auth({ onAuthStateChange }: AuthProps) {
           userId: sessionCheck.session?.user?.id
         })
         
-        onAuthStateChange()
       }
     } catch (error) {
       console.error('💥 Login exception:', error)
