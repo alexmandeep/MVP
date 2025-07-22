@@ -117,6 +117,23 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
         console.log('Pending response deleted:', deleteData)
       }
 
+      // Invoke the send_results_email edge function
+      console.log('Invoking send_results_email edge function...')
+      try {
+        const { data: emailData, error: emailError } = await supabase.functions.invoke('send_results_email', {
+          body: responseData.qa_responses
+        })
+        
+        if (emailError) {
+          console.error('Error invoking send_results_email:', emailError)
+        } else {
+          console.log('send_results_email invoked successfully:', emailData)
+        }
+      } catch (emailErr) {
+        console.error('Failed to invoke send_results_email:', emailErr)
+        // Don't throw - we don't want to fail the survey submission if email fails
+      }
+
       alert('✅ Survey submitted successfully! Thank you for your feedback.')
       
       // Reset state
