@@ -117,20 +117,20 @@ export default function SurveyTaking({ pendingSurvey, isOpen, onClose, onComplet
         console.log('Pending response deleted:', deleteData)
       }
 
-      // Invoke the send_results_email edge function
-      console.log('Invoking send_results_email edge function...')
+      // Invoke the super-task edge function
+      console.log('Invoking super-task edge function...')
       try {
-        const { data: emailData, error: emailError } = await supabase.functions.invoke('send_results_email', {
+        const { data: emailData, error: emailError } = await supabase.functions.invoke('super-task', {
           body: responseData.qa_responses
         })
         
         if (emailError) {
-          console.error('Error invoking send_results_email:', emailError)
+          console.error('Error invoking super-task:', emailError)
         } else {
-          console.log('send_results_email invoked successfully:', emailData)
+          console.log('super-task invoked successfully:', emailData)
         }
       } catch (emailErr) {
-        console.error('Failed to invoke send_results_email:', emailErr)
+        console.error('Failed to invoke super-task:', emailErr)
         // Don't throw - we don't want to fail the survey submission if email fails
       }
 
